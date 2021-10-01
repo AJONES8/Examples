@@ -1,0 +1,101 @@
+---
+title: "Mapping example for Katie"
+author: "Andy Jones"
+date: "6/7/2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#loading mapping packages
+#some of these you might need to install?
+library(tidyverse)
+library(maptools)
+library(mapdata)
+library(marmap)
+
+##############################
+#Getting a base map
+
+#This pulls a generic NOAA map
+# get bathymetry data
+b = getNOAA.bathy(lon1 = -70, lon2 = -62, lat1 = 36, lat2 = 42, 
+                  resolution = 1)
+
+#plot.bathy(b)
+## Querying NOAA database ...
+## This may take seconds to minutes, depending on grid size
+## Building bathy matrix ...
+
+# convert bathymetry to data frame
+bf = fortify.bathy(b)
+
+# get regional polygons
+reg = map_data("world2Hires")
+reg = subset(reg, region %in% c('Canada', 'USA'))
+
+# convert lat longs 
+reg$long = (360 - reg$long)*-1
+
+# set map limits
+lons = c(-70, -62)
+lats = c(36, 42)
+
+```
+
+```{r}
+##############################
+#Example data here
+EXAMPLE_DATA <- tibble(Species=sample(c('A','B'), 100, replace=TRUE),LON=runif(min=-70,max=-62,n=100),LAT=runif(min=36,max=42,n=100))
+
+
+```
+
+```{r}
+##############################
+#Plotting here
+
+# make plot
+p <- ggplot() + 
+  
+      # add 100m contour
+      geom_contour(data = bf, 
+                    aes(x=x, y=y, z=z),
+                    breaks=seq(-100,-5000,-100),
+                    size=c(0.3),
+                    colour="grey")+
+      
+      # add coastline
+      geom_polygon(data = reg, aes(x = long, y = lat, group = group), 
+                   fill = "darkgrey", color = NA) + 
+      
+      #Coordinates
+      coord_map(xlim = lons, ylim = lats)+
+      
+      # formatting
+      ylab("")+xlab("")+
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      scale_fill_viridis_c(direction = -1) +
+      
+      #adding points for the EXAMPLE DATA records
+      geom_point(data=EXAMPLE_DATA,aes(x=LON,y=LAT,colour=Species)) +
+      
+      #Adding labels
+      labs(x='Longitude',y='Latitude',subtitle='Example data that are just made up',
+           title='Example data',fill='No. records',
+           caption='* These are fun made up data')
+
+print(p)
+
+
+##############################
+#This is for printing the map to a pdf if you want to do that
+#Some code changes needed
+# ggsave('C:/Users/andrew.jones/Desktop/Northeast Canyons and Seamounts Marine National Monument Maps/EXAMPLE_DATA.pdf',sep=''),device = "pdf",width = 9, height = 9, units = c("in"))
+
+
+
+```
+
