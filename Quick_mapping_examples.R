@@ -57,6 +57,7 @@ map <- map + theme_bw() +
 
 map
 #Adding some data
+library(ggnewscale)
 data <- data.frame(lon=rnorm(500,-70,0.15),lat=rnorm(500,40,0.15),n=rnorm(500,1,0.3))
 
 map <- map + new_scale('fill') + 
