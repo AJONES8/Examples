@@ -1,0 +1,111 @@
+# Library loading
+library(tidyverse)
+library(marmap)
+library(pals)       
+library(ggthemes)   
+library(ggnewscale) 
+library(sf)
+library(ggspatial)  
+library(mapdata)    # Required for worldHires
+
+# --- FIX FOR THE ERROR ---
+# Turn off spherical geometry checking to prevent "Edge crosses edge" errors
+sf_use_s2(FALSE)
+# -------------------------
+
+# 1. SETUP BOUNDARIES (Narragansett Bay / Block Island Sound)
+lons <- c(-71.9, -71.0) # Zoomed into RI/Block Island
+lats <- c(41.0, 41.7)
+
+# 2. DATA GENERATION
+set.seed(42)
+Station <- tibble(
+  Species = sample(c('Cod','Flounder'), 30, replace=TRUE),
+  # Random points in the area
+  LONGITUDE_START = runif(min=-71.6, max=-71.1, n=30),
+  LATITUDE_START = runif(min=41.1, max=41.4, n=30),
+  DATE = sample(seq(as.Date('2019/01/01'), as.Date('2019/12/31'), by="day"), 30)
+) %>%
+  mutate(
+    LONGITUDE_END = LONGITUDE_START + rnorm(30, 0, 0.02),
+    LATITUDE_END = LATITUDE_START + rnorm(30, 0, 0.02)
+  )
+
+# 3. PREPARE LAND (Fixed Approach)
+# Use 'worldHires' (already -180 to 180) instead of 'world2Hires' (0 to 360)
+# This avoids the manual math that was causing bounding box errors.
+world_map <- map_data("worldHires") %>%
+  filter(region %in% c("USA", "Canada"))
+
+land_sf <- st_as_sf(world_map, coords = c("long", "lat"), crs = 4326) %>%
+  group_by(group) %>%
+  summarise(geometry = st_combine(geometry)) %>%
+  st_cast("POLYGON") %>% 
+  st_make_valid() %>% # Ensure geometries are clean
+  st_crop(xmin=lons[1]-0.5, xmax=lons[2]+0.5, ymin=lats[1]-0.5, ymax=lats[2]+0.5)
+
+# 4. BATHYMETRY
+# Using tryCatch to be safe, but focusing on the Narragansett area
+tryCatch({
+  atl <- getNOAA.bathy(lon1 = lons[1], lon2 = lons[2], lat1 = lats[1], lat2 = lats[2], resolution = 1)
+}, error = function(e) { message("NOAA download failed.") })
+
+atl_df <- fortify.bathy(atl)
+my_breaks <- c(0, 10, 20, 30, 40, 50, 100)
+
+# 5. PREPARE LINES
+pnts_start <- Station %>% st_as_sf(coords = c("LONGITUDE_START", "LATITUDE_START"), crs = 4326)
+pnts_end <- Station %>% st_as_sf(coords = c("LONGITUDE_END", "LATITUDE_END"), crs = 4326)
+
+lines_list <- lapply(1:nrow(Station), function(i) {
+  st_linestring(rbind(st_coordinates(pnts_start[i,]), st_coordinates(pnts_end[i,])))
+})
+line_segments <- st_sf(geometry = st_sfc(lines_list, crs = 4326))
+
+line_segments <- bind_cols(line_segments, Station) %>% 
+  mutate(SEASON = case_when(month(DATE) < 7 ~ 'Spring', TRUE ~ 'Fall'))
+
+# 6. PLOT
+sampling_map <- ggplot() + 
+  
+  # Bathymetry
+  geom_contour_filled(data=atl_df, aes(x=x, y=y, z=-1*z), breaks=my_breaks, alpha=0.9) +
+  scale_fill_manual(values = brewer.blues(length(my_breaks)-1), name="Depth (m)") +
+  new_scale_fill() +
+  
+  # Land
+  geom_sf(data=land_sf, fill="grey90", color="grey50", size=0.2) +
+  
+  # Lines
+  geom_sf(data = line_segments, aes(colour=SEASON), size=1.5) +
+  scale_colour_manual(values = c("Spring" = "#440154FF", "Fall" = "#FDE725FF")) +
+  
+  # Layout
+  coord_sf(xlim = lons, ylim = lats, expand = FALSE) +
+  theme_map() +
+  theme(
+    legend.position = c(1, 0), 
+    legend.justification = c(1, 0),
+    legend.box = "vertical",
+    legend.background = element_rect(fill = alpha("white", 0.9)),
+    panel.border = element_rect(colour = "black", fill=NA, size=1)
+  ) +
+  annotation_scale(location = "tr", width_hint = 0.2) +
+  annotation_north_arrow(location = "tr", pad_y = unit(0.4, "in"), style = north_arrow_minimal)
+
+# 7. INSET
+inset_grob <- ggplotGrob(
+  ggplot() +
+    geom_polygon(data = map_data("world"), aes(x = long, y = lat, group = group), fill = "grey70") +
+    geom_rect(aes(xmin = lons[1], ymin = lats[1], xmax = lons[2], ymax = lats[2]), color = "red", fill = NA, size=1) +
+    coord_quickmap(xlim = c(-74, -69), ylim = c(39, 43)) + # Zoomed out slightly
+    theme_void() +
+    theme(panel.background = element_rect(fill = "white", color = "black"))
+)
+
+final_map <- sampling_map +
+  annotation_custom(grob = inset_grob, 
+                    xmin = -71.9, xmax = -71.65, 
+                    ymin = 41.5, ymax = 41.7)
+
+print(final_map)
